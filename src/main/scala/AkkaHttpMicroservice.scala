@@ -4,8 +4,8 @@ import akka.http.scaladsl.Http
 import akka.http.scaladsl.client.RequestBuilding
 import akka.http.scaladsl.marshalling.ToResponseMarshallable
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
-import akka.http.scaladsl.model.StatusCodes._
-import akka.http.scaladsl.server.Directives._
+import akka.http.scaladsl.model.StatusCodes.*
+import akka.http.scaladsl.server.Directives.*
 import akka.http.scaladsl.server.Route
 import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.stream.scaladsl.{Flow, Sink, Source}
@@ -17,11 +17,26 @@ import io.circe.{Decoder, Encoder, HCursor, Json}
 
 import java.io.IOException
 import scala.concurrent.{ExecutionContext, Future}
-import scala.math._
+import scala.math.*
+//import io.opentelemetry.sdk.autoconfigure.*
+//import io.opentelemetry.sdk.*
+//import io.opentelemetry.exporter.otlp.trace.*
+//import io.opentelemetry.sdk.trace.*
+//import io.opentelemetry.api.trace.Tracer
+//import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
+//import io.opentelemetry.context.propagation.ContextPropagators
+//import io.opentelemetry.sdk.autoconfigure.spi.ConfigProperties
+//import io.opentelemetry.sdk.trace.`export`.{SimpleSpanProcessor, SpanExporter}
+//import io.opentelemetry.exporter.jaeger.JaegerGrpcSpanExporter
+//import io.opentelemetry.sdk.resources.Resource
+import java.util.function.BiFunction
+
 
 enum IpApiResponseStatus {
   case Success, Fail
 }
+
+
 case class IpApiResponse(status: IpApiResponseStatus, message: Option[String], query: String, country: Option[String], city: Option[String], lat: Option[Double], lon: Option[Double])
 
 case class IpInfo(query: String, country: Option[String], city: Option[String], lat: Option[Double], lon: Option[Double])
@@ -52,7 +67,9 @@ object IpPairSummary {
 }
 
 trait Protocols extends ErrorAccumulatingCirceSupport {
+
   import io.circe.generic.semiauto._
+
   implicit val ipApiResponseStatusDecoder: Decoder[IpApiResponseStatus] = Decoder.decodeString.map(s => IpApiResponseStatus.valueOf(s.capitalize))
   implicit val ipApiResponseDecoder: Decoder[IpApiResponse] = deriveDecoder
   implicit val ipInfoDecoder: Decoder[IpInfo] = deriveDecoder
@@ -63,30 +80,83 @@ trait Protocols extends ErrorAccumulatingCirceSupport {
   implicit val ipPairSummaryDecoder: Decoder[IpPairSummary] = deriveDecoder
 }
 
+//trait OpenTelemetryProvider {
+
+  // Create Azure Monitor exporter and configure OpenTelemetry tracer to use this exporter
+  // This should be done just once when application starts up
+  //  var exporter: OtlpGrpcSpanExporter =
+  //  OtlpGrpcSpanExporter.builder()
+  //      .setEndpoint("http://localhost:14250")
+  //      .build();
+  //
+  //val tracerProvider: SdkTracerProvider = SdkTracerProvider.builder()
+  //    .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+  //    .build();
+  //
+  //val openTelemetrySdk: OpenTelemetrySdk = OpenTelemetrySdk.builder()
+  //    .setTracerProvider(tracerProvider)
+  //    .buildAndRegisterGlobal();
+
+  ////val tracer:Tracer = openTelemetrySdk.getTracer("Sample");
+  //  // Set to the name of the service
+  //  OTEL_SERVICE_NAME
+  //
+  //  // Set Authorization header - Authorization=c82fe3d7-8ca5-402a-a05a-9b71906cd579
+  //  OTEL_EXPORTER_OTLP_HEADERS
+  //
+  //  // Set to https://otelcol.aspecto.io:4317
+  //  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+
+
+//}
+// otelBuilder.addSpanExporterCustomizer()
+
+// private val sdkTracerProvider: SdkTracerProvider = SdkTracerProvider
+//   .builder()
+//   .addSpanProcessor(
+//     SimpleSpanProcessor
+//       .builder(OtlpGrpcSpanExporter.builder().build())
+//       .build()
+//   )
+//   .build()
+
+// val openTelemetry: OpenTelemetry = OpenTelemetrySdk
+//   .builder()
+//   .setTracerProvider(sdkTracerProvider)
+//   .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+//   .buildAndRegisterGlobal()
+
+// Runtime.getRuntime.addShutdownHook(new Thread(() => sdkTracerProvider.close()))
+
+
 trait Service extends Protocols {
   implicit val system: ActorSystem
+
   implicit def executor: ExecutionContext
 
   def config: Config
-  val logger: LoggingAdapter
+
+  val logger
+  : LoggingAdapter
 
   lazy val ipApiConnectionFlow: Flow[HttpRequest, HttpResponse, Any] =
     Http().outgoingConnection(config.getString("services.ip-api.host"), config.getInt("services.ip-api.port"))
-  
+
   // Please note that using `Source.single(request).via(pool).runWith(Sink.head)` is considered anti-pattern. It's here only for the simplicity.
   // See why and how to improve it here: https://github.com/theiterators/akka-http-microservice/issues/32
   def ipApiRequest(request: HttpRequest): Future[HttpResponse] = Source.single(request).via(ipApiConnectionFlow).runWith(Sink.head)
 
   def fetchIpInfo(ip: String): Future[String | IpInfo] = {
+//    a.end();
     ipApiRequest(RequestBuilding.Get(s"/json/$ip")).flatMap { response =>
       response.status match {
         case OK =>
           Unmarshal(response.entity).to[IpApiResponse].map { ipApiResponse =>
-          ipApiResponse.status match {
-            case IpApiResponseStatus.Success => IpInfo(ipApiResponse.query,ipApiResponse.country, ipApiResponse.city, ipApiResponse.lat, ipApiResponse.lon)
-            case IpApiResponseStatus.Fail => s"""ip-api request failed with message: ${ipApiResponse.message.getOrElse("")}"""
+            ipApiResponse.status match {
+              case IpApiResponseStatus.Success => IpInfo(ipApiResponse.query, ipApiResponse.country, ipApiResponse.city, ipApiResponse.lat, ipApiResponse.lon)
+              case IpApiResponseStatus.Fail => s"""ip-api request failed with message: ${ipApiResponse.message.getOrElse("")}"""
+            }
           }
-        }
         case _ => Unmarshal(response.entity).to[String].flatMap { entity =>
           val error = s"ip-api request failed with status code ${response.status} and entity $entity"
           logger.error(error)
@@ -107,23 +177,71 @@ trait Service extends Protocols {
             }
           }
         } ~
-        (post & entity(as[IpPairSummaryRequest])) { ipPairSummaryRequest =>
-          complete {
-            val ip1InfoFuture = fetchIpInfo(ipPairSummaryRequest.ip1)
-            val ip2InfoFuture = fetchIpInfo(ipPairSummaryRequest.ip2)
-            ip1InfoFuture.zip(ip2InfoFuture).map[ToResponseMarshallable] {
-              case (info1: IpInfo, info2: IpInfo) => IpPairSummary(info1, info2)
-              case (errorMessage: String, _) => BadRequest -> errorMessage
-              case (_, errorMessage: String) => BadRequest -> errorMessage
+          (post & entity(as[IpPairSummaryRequest])) { ipPairSummaryRequest =>
+            complete {
+              val ip1InfoFuture = fetchIpInfo(ipPairSummaryRequest.ip1)
+              val ip2InfoFuture = fetchIpInfo(ipPairSummaryRequest.ip2)
+              ip1InfoFuture.zip(ip2InfoFuture).map[ToResponseMarshallable] {
+                case (info1: IpInfo, info2: IpInfo) => IpPairSummary(info1, info2)
+                case (errorMessage: String, _) => BadRequest -> errorMessage
+                case (_, errorMessage: String) => BadRequest -> errorMessage
+              }
             }
           }
-        }
       }
     }
   }
 }
 
 object AkkaHttpMicroservice extends App with Service {
+
+
+
+  //  // Set to the name of the service
+  //  OTEL_SERVICE_NAME
+  //
+  //  // Set Authorization header - Authorization=c82fe3d7-8ca5-402a-a05a-9b71906cd579
+  //  OTEL_EXPORTER_OTLP_HEADERS
+  //
+  //  // Set to https://otelcol.aspecto.io:4317
+  //  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+
+  //
+  //  .addResourceCustomizer(new BiFunction[Resource,ConfigProperties, Resource] {
+  //    override def apply(t: Resource, u: ConfigProperties): Resource = {
+  //      Resource.create(new {
+  //        ""
+  //      })
+  //    }
+//  //  }
+//  val otelBuilder: AutoConfiguredOpenTelemetrySdk = AutoConfiguredOpenTelemetrySdk
+//    .builder().addSpanExporterCustomizer(new BiFunction[SpanExporter, ConfigProperties, SpanExporter] {
+//    def apply(a: SpanExporter, b: ConfigProperties): SpanExporter = {
+//      println(s"12345")
+//      return JaegerGrpcSpanExporter.builder()
+//        //        .setEndpoint("https://otelcol.aspecto.io:4317")//
+//        .setEndpoint("http://localhost:14250")
+//        .build();
+//    }
+//  })
+//    .setResultAsGlobal(true)
+//    .build()
+//  val span = otelBuilder.getOpenTelemetrySdk().getTracer("test").spanBuilder("my span").startSpan();
+//  span.end();
+
+
+
+  //  val exporter = JaegerGrpcSpanExporter.builder()
+  //    //        //        .setEndpoint("https://otelcol.aspecto.io:4317")//
+  //    .setEndpoint("http://localhost:14250")
+  //    .build();
+  //  val sdkTracerProvider = SdkTracerProvider.builder.addSpanProcessor(SimpleSpanProcessor.create(exporter)).build
+  //
+  //  val sdk = OpenTelemetrySdk.builder.setTracerProvider(sdkTracerProvider).setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance)).build
+
+  //  Runtime.getRuntime.addShutdownHook(new Thread(sdkTracerProvider.close))
+  //  OpenTelemetrySdkAutoConfiguration.initialize(true)
+
   override implicit val system: ActorSystem = ActorSystem()
   override implicit val executor: ExecutionContext = system.dispatcher
 
@@ -131,4 +249,16 @@ object AkkaHttpMicroservice extends App with Service {
   override val logger = Logging(system, "AkkaHttpMicroservice")
 
   Http().newServerAt(config.getString("http.interface"), config.getInt("http.port")).bindFlow(routes)
+
+
+//  import io.opentelemetry.api._
+//  val a = GlobalOpenTelemetry.getTracer("s").spanBuilder("good span").startSpan();
+//  a.end();
+//  import scala.collection.JavaConverters._
+//  import scala.language.implicitConversions
+//  val environmentVars = System.getenv().asScala
+//  for ((k,v) <- environmentVars) println(s"key: $k, value: $v")
+//
+//  val properties = System.getProperties().asScala
+//  for ((k,v) <- properties) println(s"key: $k, value: $v")
 }
